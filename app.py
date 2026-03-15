@@ -1,6 +1,7 @@
 """
-🕶️ LENSKART DUBAI INTELLIGENCE SYSTEM - FULLY FIXED PRODUCTION APP
+🕶️ LENSKART DUBAI INTELLIGENCE SYSTEM - WITH INFERENCES
 3 Pages | 10 Charts | ML: Clustering + RF + Association Rules
+Every chart has a plain-English inference box below it.
 Data: lenskart_dubai_stores.csv
 """
 
@@ -86,6 +87,17 @@ div[data-testid="stButton"] > button {
     border-radius: 20px; padding: 1.5rem; text-align: center;
     box-shadow: 0 8px 32px rgba(102,126,234,0.2); margin-bottom: 1rem;
 }
+.inference-box {
+    background: rgba(102,126,234,0.12);
+    border-left: 4px solid #667eea;
+    border-radius: 0 12px 12px 0;
+    padding: 1rem 1.2rem;
+    margin: 0.5rem 0 1.5rem 0;
+    color: rgba(255,255,255,0.85) !important;
+    font-size: 0.92rem;
+    line-height: 1.6;
+}
+.inference-box b { color: #a78bfa !important; }
 .go-badge {
     background: linear-gradient(135deg, #22c55e, #16a34a);
     color: white; font-weight: 800; font-size: 1.5rem;
@@ -107,6 +119,11 @@ div[data-testid="stButton"] > button {
 </style>
 """, unsafe_allow_html=True)
 
+def inference(text):
+    """Render a plain-English inference box below a chart."""
+    st.markdown(f'''<div class="inference-box">💡 <b>What this tells us:</b> {text}</div>''',
+                unsafe_allow_html=True)
+
 CHART_BG = dict(
     paper_bgcolor="rgba(0,0,0,0)",
     plot_bgcolor="rgba(0,0,0,0)",
@@ -117,22 +134,19 @@ AXIS = dict(gridcolor="rgba(255,255,255,0.1)", zerolinecolor="rgba(255,255,255,0
 
 FEATURES = ["pop_density", "med_age", "med_income_aed",
             "competitors", "footfall_daily", "near_mall", "metro_access"]
-
 FEATURE_LABELS = {
-    "pop_density": "Population Density",
-    "med_age": "Median Age",
+    "pop_density":    "Population Density",
+    "med_age":        "Median Age",
     "med_income_aed": "Median Income",
-    "competitors": "Competitors",
+    "competitors":    "Competitors",
     "footfall_daily": "Daily Footfall",
-    "near_mall": "Near Mall",
-    "metro_access": "Metro Access"
+    "near_mall":      "Near Mall",
+    "metro_access":   "Metro Access"
 }
-
 CLUSTER_NAMES = {
     0: "Premium Hub", 1: "Mass Market", 2: "Emerging Zone",
     3: "High Footfall", 4: "Residential", 5: "Business District"
 }
-
 COLORS = ["#667eea","#22c55e","#f59e0b","#ef4444","#a78bfa","#38bdf8"]
 
 
@@ -149,10 +163,8 @@ def load_and_train():
     rf = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=8)
     rf.fit(X_scaled, y)
     df["confidence"] = rf.predict_proba(X_scaled)[:, 1]
-    df["stars"] = pd.cut(
-        df["confidence"], bins=[0, 0.2, 0.4, 0.6, 0.8, 1.0],
-        labels=["⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"]
-    )
+    df["stars"] = pd.cut(df["confidence"], bins=[0,0.2,0.4,0.6,0.8,1.0],
+                         labels=["⭐","⭐⭐","⭐⭐⭐","⭐⭐⭐⭐","⭐⭐⭐⭐⭐"])
     df["verdict"] = df["confidence"].apply(
         lambda x: "✅ Recommended" if x > 0.65 else ("⚠️ Review" if x > 0.40 else "❌ Avoid")
     )
@@ -165,11 +177,9 @@ with st.sidebar:
     st.markdown("## 🕶️ **Lenskart AI**")
     st.markdown("*Dubai Expansion Intelligence*")
     st.markdown("---")
-    page = st.radio(
-        "Navigate",
-        ["🏠 Overview", "🔍 Explore Sites", "🎯 Predict Location"],
-        label_visibility="collapsed"
-    )
+    page = st.radio("Navigate",
+                    ["🏠 Overview", "🔍 Explore Sites", "🎯 Predict Location"],
+                    label_visibility="collapsed")
     st.markdown("---")
     st.markdown("**Filter Areas**")
     areas = sorted(df["area"].unique())
@@ -177,7 +187,7 @@ with st.sidebar:
     df_f = df[df["area"].isin(sel)].copy() if sel else df.copy()
     st.markdown("---")
     rec = df_f["verdict"].str.contains("Recommended").sum()
-    st.caption(f"📊 {len(df_f):,} sites loaded | ✅ {rec} recommended")
+    st.caption(f"📊 {len(df_f):,} sites | ✅ {rec} recommended")
 
 
 # ════════════════════════════════════════════════
@@ -195,7 +205,7 @@ if page == "🏠 Overview":
     """, unsafe_allow_html=True)
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("📍 Sites Analyzed",  f"{len(df_f):,}", "+2,500")
+    k1.metric("📍 Sites Analyzed",  f"{len(df_f):,}",  "+2,500")
     k2.metric("✅ Recommended",      df_f["verdict"].str.contains("Recommended").sum(), "+12%")
     k3.metric("🏆 Avg Confidence",   f"{df_f['confidence'].mean():.1%}", "↑5%")
     k4.metric("⚠️ High Risk",        (df_f["risk_level"] == "High").sum(), "-8%")
@@ -203,6 +213,7 @@ if page == "🏠 Overview":
     st.markdown("---")
     top5 = df_f.nlargest(5, "confidence")
 
+    # MAP
     col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown("### 🗺️ Dubai Site Intelligence Map")
@@ -210,15 +221,20 @@ if page == "🏠 Overview":
             df_f, lat="lat", lon="lon",
             color="confidence", size="composite_score",
             hover_name="area",
-            hover_data={"verdict": True, "stars": True,
-                        "risk_level": True, "confidence": ":.1%",
-                        "lat": False, "lon": False},
+            hover_data={"verdict": True, "stars": True, "risk_level": True,
+                        "confidence": ":.1%", "lat": False, "lon": False},
             color_continuous_scale=[[0,"#ef4444"],[0.5,"#f59e0b"],[1,"#22c55e"]],
             mapbox_style="carto-darkmatter",
             zoom=10, height=480, opacity=0.85
         )
         fig_map.update_layout(**CHART_BG)
         st.plotly_chart(fig_map, use_container_width=True)
+        inference(
+            "Each dot represents a potential Lenskart outlet location in Dubai. "
+            "<b>Green dots = high confidence (ideal to open)</b>, red dots = avoid. "
+            "Larger dots have higher composite scores. Focus on green clusters near "
+            "business/mall zones for maximum success probability."
+        )
 
     with col2:
         st.markdown("### 🏆 Top Recommendations")
@@ -235,6 +251,7 @@ if page == "🏠 Overview":
             </div>
             """, unsafe_allow_html=True)
 
+    # SUNBURST + TREEMAP
     col3, col4 = st.columns(2)
     with col3:
         st.markdown("### 🌀 Sunburst Hierarchy")
@@ -246,6 +263,12 @@ if page == "🏠 Overview":
         )
         fig_sun.update_layout(**CHART_BG)
         st.plotly_chart(fig_sun, use_container_width=True)
+        inference(
+            "This chart drills from <b>Area → Location Type → Verdict</b>. "
+            "The innermost ring shows areas; the middle ring shows what type of zone it is "
+            "(e.g., Premium Hub or Mass Market); the outer ring shows the AI verdict. "
+            "Larger, greener slices = more high-scoring sites in that zone — <b>prioritize those areas first.</b>"
+        )
 
     with col4:
         st.markdown("### 🌲 Footfall Treemap")
@@ -257,7 +280,14 @@ if page == "🏠 Overview":
         )
         fig_tree.update_layout(**CHART_BG)
         st.plotly_chart(fig_tree, use_container_width=True)
+        inference(
+            "Box size = daily footfall (bigger = more people passing by). "
+            "Color = AI confidence score. <b>Ideal target: a large green box</b> — "
+            "meaning high footfall AND high confidence. Avoid large red boxes (high traffic "
+            "but low success probability, often due to too many competitors)."
+        )
 
+    # SANKEY + FUNNEL
     col5, col6 = st.columns(2)
     with col5:
         st.markdown("### 🔀 Sankey: Location Flow")
@@ -265,11 +295,7 @@ if page == "🏠 Overview":
         all_nodes = list(df_f["location_type"].unique()) + list(df_f["verdict"].unique())
         node_idx = {n: i for i, n in enumerate(all_nodes)}
         fig_sankey = go.Figure(go.Sankey(
-            node=dict(
-                label=all_nodes,
-                color=COLORS[:len(all_nodes)],
-                pad=20, thickness=25
-            ),
+            node=dict(label=all_nodes, color=COLORS[:len(all_nodes)], pad=20, thickness=25),
             link=dict(
                 source=[node_idx[r["location_type"]] for _, r in agg.iterrows()],
                 target=[node_idx[r["verdict"]] for _, r in agg.iterrows()],
@@ -279,23 +305,36 @@ if page == "🏠 Overview":
         ))
         fig_sankey.update_layout(**CHART_BG, title="Location Types → Recommendation", height=420)
         st.plotly_chart(fig_sankey, use_container_width=True)
+        inference(
+            "Each flow line shows how many sites of a given location type end up as "
+            "Recommended, Review, or Avoid. <b>Thick flows into ✅ Recommended = "
+            "that zone type is consistently good for Lenskart.</b> Thin flows into ❌ Avoid "
+            "suggest that zone type rarely works — skip those areas."
+        )
 
     with col6:
         st.markdown("### 🔺 Site Qualification Funnel")
-        total      = len(df_f)
-        near_mall  = int(df_f["near_mall"].sum())
-        metro      = int(df_f["metro_access"].sum())
-        low_comp   = int((df_f["competitors"] <= 2).sum())
-        good_inc   = int((df_f["med_income_aed"] > 15000).sum())
-        recommended= int(df_f["verdict"].str.contains("Recommended").sum())
-        fig_funnel = go.Figure(go.Funnel(
+        total       = len(df_f)
+        near_mall   = int(df_f["near_mall"].sum())
+        metro_c     = int(df_f["metro_access"].sum())
+        low_comp    = int((df_f["competitors"] <= 2).sum())
+        good_inc    = int((df_f["med_income_aed"] > 15000).sum())
+        recommended = int(df_f["verdict"].str.contains("Recommended").sum())
+        fig_funnel  = go.Figure(go.Funnel(
             y=["All Sites","Near Mall","Metro Access","Low Competition","Good Income","✅ Recommended"],
-            x=[total, near_mall, metro, low_comp, good_inc, recommended],
+            x=[total, near_mall, metro_c, low_comp, good_inc, recommended],
             textinfo="value+percent initial",
             marker=dict(color=["#6366f1","#818cf8","#a78bfa","#c4b5fd","#667eea","#22c55e"])
         ))
         fig_funnel.update_layout(**CHART_BG, title="Site Qualification Pipeline", height=420)
         st.plotly_chart(fig_funnel, use_container_width=True)
+        inference(
+            "This funnel shows how many sites survive each quality filter. "
+            "Starting from all sites, we progressively filter by mall proximity, metro access, "
+            "low competition, good income demographics — only the sites passing <b>all filters "
+            "make it to ✅ Recommended</b>. A steep drop at any stage reveals the biggest "
+            "bottleneck in Dubai's site availability for Lenskart."
+        )
 
 
 # ════════════════════════════════════════════════
@@ -319,19 +358,30 @@ elif page == "🔍 Explore Sites":
         )
         fig_3d.update_layout(**CHART_BG)
         st.plotly_chart(fig_3d, use_container_width=True)
+        inference(
+            "This 3D chart plots every site across three dimensions simultaneously: "
+            "<b>income level (X), daily footfall (Y), and composite score (Z).</b> "
+            "Green dots floating at the top-right-front corner are your best opportunities — "
+            "high income area, high footfall, and high score. Use mouse to rotate and zoom."
+        )
 
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### 📏 Parallel Coordinates")
             sample = df_f.sample(min(300, len(df_f)), random_state=42)
             fig_par = px.parallel_coordinates(
-                sample, dimensions=FEATURES,
-                color="confidence",
+                sample, dimensions=FEATURES, color="confidence",
                 color_continuous_scale=[[0,"#ef4444"],[0.5,"#f59e0b"],[1,"#22c55e"]],
-                title="All Features vs Confidence", height=450
+                title="All 7 Features vs Confidence", height=450
             )
             fig_par.update_layout(**CHART_BG)
             st.plotly_chart(fig_par, use_container_width=True)
+            inference(
+                "Each vertical axis = one feature. Each line = one site. "
+                "<b>Green lines crossing through high values on Income, Footfall, "
+                "and Near Mall — while staying low on Competitors — are your best sites.</b> "
+                "Drag to select ranges on any axis to filter sites interactively."
+            )
 
         with col2:
             st.markdown("### 🔥 Feature Correlation Heatmap")
@@ -343,12 +393,19 @@ elif page == "🔍 Explore Sites":
             )
             fig_heat.update_layout(**CHART_BG)
             st.plotly_chart(fig_heat, use_container_width=True)
+            inference(
+                "Values close to <b>+1.0 (green) = strong positive relationship</b>; "
+                "close to -1.0 (purple) = inverse relationship. "
+                "For example, if Footfall and Composite Score show a high positive value, "
+                "it means footfall is a key driver of site quality. "
+                "<b>Competitors showing negative correlation with score confirms "
+                "that more rivals = lower site attractiveness.</b>"
+            )
 
         st.markdown("### 🎬 Animated Bubble Chart")
         df_anim = df_f.copy()
-        df_anim["income_band"] = pd.cut(
-            df_f["med_income_aed"], bins=3, labels=["Low Income","Mid Income","High Income"]
-        )
+        df_anim["income_band"] = pd.cut(df_f["med_income_aed"], bins=3,
+                                         labels=["Low Income","Mid Income","High Income"])
         fig_anim = px.scatter(
             df_anim, x="med_income_aed", y="footfall_daily",
             animation_frame="income_band",
@@ -359,6 +416,12 @@ elif page == "🔍 Explore Sites":
         )
         fig_anim.update_layout(**CHART_BG)
         st.plotly_chart(fig_anim, use_container_width=True)
+        inference(
+            "Press ▶ to animate through income bands. Watch how site confidence changes "
+            "as income rises. <b>In the High Income frame, more green bubbles appear — "
+            "confirming that wealthier neighbourhoods offer better Lenskart outlet prospects.</b> "
+            "Bubble size = composite score, so bigger green bubbles are your top picks."
+        )
 
         st.markdown("### 🎛️ What Drives a Recommended Site?")
         imp_df = pd.DataFrame({
@@ -372,23 +435,27 @@ elif page == "🔍 Explore Sites":
         )
         fig_imp.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS)
         st.plotly_chart(fig_imp, use_container_width=True)
+        inference(
+            "The Random Forest model scores each factor by how much it influences "
+            "the final recommendation. <b>Longer bar = more impact on whether a site is "
+            "Recommended or Avoided.</b> Use this to prioritise your data collection — "
+            "the top 2-3 factors matter most when evaluating any new Dubai location."
+        )
 
     with tab2:
         st.markdown("### 🧬 Location Type Profiles")
         col1, col2 = st.columns(2)
         with col1:
             cluster_means = df_f.groupby("location_type")[FEATURES].mean()
-            fig_radar = go.Figure()
             feat_labels = list(FEATURE_LABELS.values())
+            fig_radar = go.Figure()
             for i, (lt, row) in enumerate(cluster_means.iterrows()):
                 vals = row.tolist()
                 mn, mx = min(vals), max(vals) + 1e-9
-                norm = [(v - mn) / (mx - mn) for v in vals]
+                norm = [(v - mn)/(mx - mn) for v in vals]
                 fig_radar.add_trace(go.Scatterpolar(
-                    r=norm + [norm[0]],
-                    theta=feat_labels + [feat_labels[0]],
-                    fill="toself", name=lt,
-                    line_color=COLORS[i % len(COLORS)]
+                    r=norm + [norm[0]], theta=feat_labels + [feat_labels[0]],
+                    fill="toself", name=lt, line_color=COLORS[i % len(COLORS)]
                 ))
             fig_radar.update_layout(
                 **CHART_BG, title="Location Type Radar", height=470,
@@ -398,23 +465,35 @@ elif page == "🔍 Explore Sites":
                 )
             )
             st.plotly_chart(fig_radar, use_container_width=True)
+            inference(
+                "Each coloured shape = one location type. A shape that fills the radar "
+                "broadly scores high across all features. <b>'Premium Hub' and 'High Footfall' "
+                "types with wider shapes are your most well-rounded opportunities.</b> "
+                "Narrow shapes indicate zone types that are strong on only one or two factors — "
+                "riskier bets for a new outlet."
+            )
 
         with col2:
             fig_violin = px.violin(
                 df_f, y="confidence", x="location_type",
                 box=True, points="outliers", color="location_type",
-                title="Confidence by Location Type", height=470
+                title="Confidence Distribution by Location Type", height=470
             )
             fig_violin.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS, showlegend=False)
             st.plotly_chart(fig_violin, use_container_width=True)
+            inference(
+                "The violin shape shows the full range of confidence scores within each "
+                "location type. <b>A tall, narrow violin centred near the top = consistently "
+                "high confidence (reliable zone type).</b> Wide violins spread across all values "
+                "mean that zone is unpredictable — some great sites, some terrible. "
+                "The white dot inside = median confidence."
+            )
 
-        # FIXED Association Rules
         st.markdown("### 🔗 Key Insights (Association Rules)")
         df_bin = df_f[["near_mall", "metro_access", "optimal_site"]].astype(bool)
         freq = apriori(df_bin, min_support=0.1, use_colnames=True)
         if not freq.empty:
             rules = association_rules(freq, metric="lift", min_threshold=1.0)
-            # SAFE rename — no column count mismatch
             rules = rules.rename(columns={
                 "antecedents":  "IF (Antecedent)",
                 "consequents":  "THEN (Consequent)",
@@ -422,18 +501,26 @@ elif page == "🔍 Explore Sites":
                 "confidence":   "Confidence",
                 "lift":         "Lift"
             })
-            rules["IF (Antecedent)"]    = rules["IF (Antecedent)"].apply(lambda x: " + ".join(list(x)))
-            rules["THEN (Consequent)"]  = rules["THEN (Consequent)"].apply(lambda x: " + ".join(list(x)))
+            rules["IF (Antecedent)"]   = rules["IF (Antecedent)"].apply(lambda x: " + ".join(list(x)))
+            rules["THEN (Consequent)"] = rules["THEN (Consequent)"].apply(lambda x: " + ".join(list(x)))
             rules = rules.round(3)
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("Rules Found",     len(rules))
-            c2.metric("Max Lift",        f"{rules['Lift'].max():.2f}x")
-            c3.metric("Max Confidence",  f"{rules['Confidence'].max():.1%}")
+            c1.metric("Rules Found",    len(rules))
+            c2.metric("Max Lift",       f"{rules['Lift'].max():.2f}x")
+            c3.metric("Max Confidence", f"{rules['Confidence'].max():.1%}")
 
             st.dataframe(
                 rules[["IF (Antecedent)", "THEN (Consequent)", "Support", "Confidence", "Lift"]].head(10),
                 use_container_width=True
+            )
+            inference(
+                "<b>IF (Antecedent) → THEN (Consequent)</b> reads like a business rule. "
+                "Example: IF near_mall + metro_access THEN optimal_site — meaning locations with "
+                "both a mall and metro nearby are very likely to be optimal. "
+                "<b>Lift > 1.0 = the combination is more powerful than chance.</b> "
+                "Higher lift = stronger business insight. Use these rules as quick checklists "
+                "when scouting new Dubai locations."
             )
 
             fig_rules = px.scatter(
@@ -441,15 +528,23 @@ elif page == "🔍 Explore Sites":
                 color="Lift",
                 hover_data={"IF (Antecedent)": True, "THEN (Consequent)": True},
                 color_continuous_scale="plasma",
-                title="Support vs Confidence (size = Lift)", height=380
+                title="Support vs Confidence (Bubble Size = Lift)", height=380
             )
             fig_rules.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS)
             st.plotly_chart(fig_rules, use_container_width=True)
+            inference(
+                "Ideal rules sit in the <b>top-right corner (high support + high confidence) "
+                "with large bubbles (high lift).</b> Support = how often this pattern appears in data. "
+                "Confidence = how reliably the rule holds. Lift = how much stronger than random. "
+                "Top-right large bubbles are your most actionable, reliable site-selection rules."
+            )
         else:
             st.info("No strong rules found. Select more areas in the sidebar.")
 
     with tab3:
         st.markdown("### ⏳ 3-Year Risk Aging Matrix")
+        st.caption("How site risk evolves over a standard 3-year commercial lease in Dubai")
+
         risk_data = {
             "Low":    [1.0, 1.1, 1.2],
             "Medium": [1.0, 1.4, 1.9],
@@ -475,6 +570,13 @@ elif page == "🔍 Explore Sites":
             fig_line.update_traces(line_width=3, marker_size=10)
             fig_line.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS)
             st.plotly_chart(fig_line, use_container_width=True)
+            inference(
+                "<b>Low-risk sites (green) stay nearly flat</b> — safe investments for the full "
+                "lease term. <b>High-risk sites (red) compound quickly</b> — what starts as "
+                "manageable risk in Year 1 can become 2.8x worse by Year 3 due to increasing "
+                "competition, rent hikes, or changing demographics. "
+                "Lenskart should prioritise Low-risk sites for long-term leases."
+            )
 
         with col2:
             fig_area = px.area(
@@ -484,23 +586,32 @@ elif page == "🔍 Explore Sites":
             )
             fig_area.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS)
             st.plotly_chart(fig_area, use_container_width=True)
+            inference(
+                "The stacked area shows <b>total portfolio risk across all sites over time.</b> "
+                "If the red area grows fastest, the overall portfolio is ageing badly. "
+                "Use this to stress-test lease renewal decisions — "
+                "a large red area in Year 3 signals urgent need to renegotiate or exit those sites."
+            )
 
         st.markdown("### 🔥 Area × Risk Heatmap")
         heat_pivot = df_f.groupby(["area", "risk_level"]).size().unstack(fill_value=0)
         fig_heat2 = px.imshow(
             heat_pivot, color_continuous_scale="RdYlGn_r",
             text_auto=True, aspect="auto",
-            title="Sites per Area by Risk Level", height=420
+            title="Number of Sites per Area by Risk Level", height=420
         )
         fig_heat2.update_layout(**CHART_BG)
         st.plotly_chart(fig_heat2, use_container_width=True)
+        inference(
+            "Each cell = number of sites in that area with that risk level. "
+            "<b>Dark red cells = many high-risk sites in that area — avoid opening here.</b> "
+            "Dark green cells = many low-risk sites — strong expansion territory. "
+            "Areas with mostly green cells across the row are your safest Dubai zones."
+        )
 
         csv = df_f.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "📥 Download Full Analysis CSV", csv,
-            "lenskart_analysis.csv", "text/csv",
-            use_container_width=True
-        )
+        st.download_button("📥 Download Full Analysis CSV", csv,
+                           "lenskart_analysis.csv", "text/csv", use_container_width=True)
 
 
 # ════════════════════════════════════════════════
@@ -517,13 +628,13 @@ elif page == "🎯 Predict Location":
         st.markdown('''<div class="hero-card">''', unsafe_allow_html=True)
         st.markdown("### 📝 Site Details")
         area_input  = st.text_input("📍 Area Name (optional)", "JLT")
-        income      = st.slider("💰 Median Income (AED/month)", 7500, 45000, 18000, 500)
-        footfall    = st.slider("👣 Daily Footfall Estimate",   200,  45000,  8000, 100)
-        density     = st.slider("👥 Population Density",        1.0,  45.0,   15.0,  0.5)
-        age         = st.slider("👶 Median Age",                 20,    55,     32)
-        competitors = st.slider("🏪 Nearby Competitors",          0,    10,      2)
-        near_mall   = st.toggle("🏬 Near a Mall?",        True)
-        metro       = st.toggle("🚇 Metro Access?",       True)
+        income      = st.slider("💰 Median Income (AED/month)",  7500, 45000, 18000, 500)
+        footfall    = st.slider("👣 Daily Footfall Estimate",     200,  45000,  8000, 100)
+        density     = st.slider("👥 Population Density",          1.0,   45.0,  15.0,   0.5)
+        age         = st.slider("👶 Median Age",                   20,     55,    32)
+        competitors = st.slider("🏪 Nearby Competitors",            0,     10,     2)
+        near_mall   = st.toggle("🏬 Near a Mall?",   True)
+        metro       = st.toggle("🚇 Metro Access?",  True)
         st.markdown('''</div>''', unsafe_allow_html=True)
         predict_btn = st.button("🚀 Predict This Location", use_container_width=True)
 
@@ -567,8 +678,8 @@ elif page == "🎯 Predict Location":
                 title={"text": "Confidence Score (%)", "font": {"color": "white"}},
                 number={"suffix": "%", "font": {"color": "white", "size": 48}},
                 gauge={
-                    "axis":    {"range": [0, 100], "tickcolor": "white"},
-                    "bar":     {"color": "#667eea", "thickness": 0.3},
+                    "axis": {"range": [0, 100], "tickcolor": "white"},
+                    "bar":  {"color": "#667eea", "thickness": 0.3},
                     "bgcolor": "rgba(255,255,255,0.05)",
                     "bordercolor": "rgba(255,255,255,0.2)",
                     "steps": [
@@ -576,21 +687,28 @@ elif page == "🎯 Predict Location":
                         {"range": [40, 65], "color": "rgba(245,158,11,0.3)"},
                         {"range": [65,100], "color": "rgba(34,197,94,0.3)"}
                     ],
-                    "threshold": {"line": {"color":"white","width":3}, "thickness":0.8, "value":65}
+                    "threshold": {"line": {"color":"white","width":3},
+                                  "thickness":0.8, "value":65}
                 }
             ))
             fig_gauge.update_layout(**CHART_BG, height=320)
             st.plotly_chart(fig_gauge, use_container_width=True)
+            inference(
+                "The needle shows how confident the AI is that this site will succeed. "
+                "<b>Green zone (65–100%) = Recommended. Yellow zone (40–65%) = Review carefully. "
+                "Red zone (0–40%) = Avoid.</b> The white threshold line at 65% is the "
+                "minimum confidence Lenskart should require before committing to a lease."
+            )
 
             st.markdown("### 🔍 Score Breakdown")
             components = {
-                "Footfall":          0.30 * float(np.log1p(footfall)) / 10,
-                "Demographics":      0.25 * (1 if age < 38 and income > 15000 else 0),
-                "Low Competition":   0.20 * (1 / (1 + competitors)),
-                "Accessibility":     0.15 * (int(near_mall) + int(metro)),
-                "Population Density":0.10 * (density / 20)
+                "Footfall":           0.30 * float(np.log1p(footfall)) / 10,
+                "Demographics":       0.25 * (1 if age < 38 and income > 15000 else 0),
+                "Low Competition":    0.20 * (1 / (1 + competitors)),
+                "Accessibility":      0.15 * (int(near_mall) + int(metro)),
+                "Population Density": 0.10 * (density / 20)
             }
-            sc_df  = pd.DataFrame(components.items(), columns=["Factor","Score"])
+            sc_df = pd.DataFrame(components.items(), columns=["Factor","Score"])
             total_score = sc_df["Score"].sum()
 
             fig_wf = go.Figure(go.Waterfall(
@@ -606,7 +724,13 @@ elif page == "🎯 Predict Location":
             fig_wf.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS,
                                  title="Composite Score Decomposition", height=380)
             st.plotly_chart(fig_wf, use_container_width=True)
-
+            inference(
+                "Each bar shows how much one factor contributes to the final site score. "
+                "<b>Taller green bars = that factor is working in your favour.</b> "
+                "If Demographics shows zero, it means the area's age/income profile doesn't "
+                "match Lenskart's target customer. The blue 'Total' bar is the overall "
+                "composite score — higher is better, with >0.65 being the go/no-go threshold."
+            )
         else:
             st.markdown("""
             <div class="hero-card" style="text-align:center;padding:4rem 2rem">
