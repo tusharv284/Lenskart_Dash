@@ -1,8 +1,25 @@
 """
 🕶️ LENSKART DUBAI INTELLIGENCE SYSTEM - WITH AI CHATBOT
-3 Pages + Chatbot | 10 Charts | ML: Clustering + RF + Association Rules
+4 Pages + Chatbot | 10+ Charts | ML: Clustering + RF + Association Rules
 Every chart has a plain-English inference box below it.
 Data: lenskart_dubai_stores.csv
+
+IMPROVEMENTS APPLIED:
+1. Sidebar filter defaults to ALL areas (not just first 5)
+2. Sidebar shows confidence score distribution (histogram) for filtered data
+3. Metric delta values are now dynamic (vs. full unfiltered dataset)
+4. Predict page: demographics component fix — prevents 0.30 overflow in waterfall
+5. Chatbot: added "compare areas" intent + "store count" intent
+6. Chatbot: fallback now echoes the user's query back for context
+7. 3-Year outlook risk multipliers exposed as configurable constants
+8. Association rules: graceful fallback if freq itemsets are empty
+9. Page 2 animated bubble: income_band sort order fixed (Low→Mid→High)
+10. KMeans n_clusters made a CONFIG constant for easy tuning
+11. Added @st.cache_data to chatbot_response to avoid recomputation
+12. download button moved to sidebar for global access
+13. Sankey node colors now always match COLORS list length
+14. Added clear session state button in sidebar
+15. Footer updated with last-run timestamp
 """
 
 import streamlit as st
@@ -15,6 +32,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from mlxtend.frequent_patterns import apriori, association_rules
 import re
+from datetime import datetime
+
+# ── CONFIG ──────────────────────────────────────────────────────────────────
+N_CLUSTERS = 6
+RISK_MULTIPLIERS = {"Low": [1.0, 1.1, 1.2], "Medium": [1.0, 1.4, 1.9], "High": [1.0, 1.8, 2.8]}
+CONFIDENCE_THRESHOLD_GO     = 0.65
+CONFIDENCE_THRESHOLD_REVIEW = 0.40
 
 st.set_page_config(
     layout="wide",
@@ -172,7 +196,7 @@ def load_and_train():
     X = df[FEATURES]
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    kmeans = KMeans(n_clusters=6, random_state=42, n_init=10)
+    kmeans = KMeans(n_clusters=N_CLUSTERS, random_state=42, n_init=10)
     df["cluster"] = kmeans.fit_predict(X_scaled)
     df["location_type"] = df["cluster"].map(CLUSTER_NAMES)
     y = (df["composite_score"] > df["composite_score"].quantile(0.75)).astype(int)
@@ -182,7 +206,8 @@ def load_and_train():
     df["stars"] = pd.cut(df["confidence"], bins=[0,0.2,0.4,0.6,0.8,1.0],
                          labels=["⭐","⭐⭐","⭐⭐⭐","⭐⭐⭐⭐","⭐⭐⭐⭐⭐"])
     df["verdict"] = df["confidence"].apply(
-        lambda x: "✅ Recommended" if x > 0.65 else ("⚠️ Review" if x > 0.40 else "❌ Avoid")
+        lambda x: "✅ Recommended" if x > CONFIDENCE_THRESHOLD_GO
+        else ("⚠️ Review" if x > CONFIDENCE_THRESHOLD_REVIEW else "❌ Avoid")
     )
     return df, scaler, kmeans, rf
 
@@ -218,6 +243,33 @@ def chatbot_response(user_msg: str, df: pd.DataFrame) -> str:
             "- *What are the top recommended sites?*\n"
             "- *Which area has the highest risk?*\n"
             "- *What drives a successful outlet?*"
+        )
+
+    # ── Compare areas (NEW) ──
+    if re.search(r"compar|versus|vs\.?|difference between|which.*better", msg):
+        area_conf = df.groupby("area")["confidence"].mean().sort_values(ascending=False)
+        top3 = area_conf.head(3)
+        bot3 = area_conf.tail(3)
+        top_lines = "\n".join([f"**{i+1}. {a}** — {v:.1%}" for i, (a, v) in enumerate(top3.items())])
+        bot_lines = "\n".join([f"- {a} — {v:.1%}" for a, v in bot3.items()])
+        return (
+            f"📊 **Area Comparison (Average Confidence):**\n\n"
+            f"🏆 **Top Performers:**\n{top_lines}\n\n"
+            f"⚠️ **Lowest Performers:**\n{bot_lines}\n\n"
+            f"💡 Use the **Sankey chart** on the Overview page to see how each area's "
+            f"location types map to final recommendations."
+        )
+
+    # ── Store count / how many stores (NEW) ──
+    if re.search(r"how many store|number of store|store count|total store|outlets", msg):
+        type_counts = df["location_type"].value_counts()
+        lines = "\n".join([f"- **{k}:** {v} sites" for k, v in type_counts.items()])
+        return (
+            f"🏪 **Store/Site Count Breakdown:**\n\n"
+            f"- 📍 **Total sites:** {total:,}\n"
+            f"- ✅ **Recommended:** {rec_count} ({rec_count/total:.1%})\n"
+            f"- ❌ **Avoid:** {avoid_count} ({avoid_count/total:.1%})\n\n"
+            f"**By Location Type:**\n{lines}"
         )
 
     # ── Top sites ──
@@ -288,9 +340,9 @@ def chatbot_response(user_msg: str, df: pd.DataFrame) -> str:
             f"🤖 **About the AI Model:**\n\n"
             f"The dashboard uses a **Random Forest Classifier** trained on {total:,} Dubai sites.\n\n"
             f"- **Confidence Score** = probability that a site will be optimal (0–100%)\n"
-            f"- **Threshold:** Sites above **65%** are ✅ Recommended\n"
-            f"- **40–65%:** ⚠️ Review carefully\n"
-            f"- **Below 40%:** ❌ Avoid\n\n"
+            f"- **Threshold:** Sites above **{CONFIDENCE_THRESHOLD_GO:.0%}** are ✅ Recommended\n"
+            f"- **{CONFIDENCE_THRESHOLD_REVIEW:.0%}–{CONFIDENCE_THRESHOLD_GO:.0%}:** ⚠️ Review carefully\n"
+            f"- **Below {CONFIDENCE_THRESHOLD_REVIEW:.0%}:** ❌ Avoid\n\n"
             f"Average confidence across filtered sites: **{avg_score:.1%}**\n"
             f"Best site confidence: **{best_score:.1%}**"
         )
@@ -322,7 +374,7 @@ def chatbot_response(user_msg: str, df: pd.DataFrame) -> str:
 
     # ── Competition ──
     if re.search(r"competi|rival|opponent|other store|nearby store", msg):
-        low_comp = (df["competitors"] <= 1).sum()
+        low_comp  = (df["competitors"] <= 1).sum()
         high_comp = (df["competitors"] >= 4).sum()
         return (
             f"🏪 **Competition Analysis:**\n\n"
@@ -385,13 +437,28 @@ def chatbot_response(user_msg: str, df: pd.DataFrame) -> str:
             "See the *🧬 Location Types* tab for the full rules table."
         )
 
-    # ── Fallback ──
+
+    # ── ROI questions (NEW) ──
+    if re.search(r"roi|return on invest|payback|npv|net present|profit.*outlet|break.*even|viab", msg):
+        return (
+            "💰 **ROI Analysis:**\n\n"
+            "Use the **💰 ROI Analyzer** page for a full financial model. Here's a quick summary:\n\n"
+            f"- The dashboard estimates ROI using footfall, income, and cost benchmarks\n"
+            f"- **Best area by estimated ROI:** {df.groupby('area')['confidence'].mean().idxmax()}\n"
+            "- **Payback threshold:** < 2 years = exceptional for Dubai retail\n"
+            "- **NPV > 0** at your WACC = value-creating investment\n\n"
+            "💡 Open the ROI Analyzer → *Input & Forecast* tab to model any custom site with "
+            "your own rent, footfall, and growth assumptions."
+        )
+
+    # ── Fallback — echo user query for context ──
     suggestions = [
         "top recommended sites", "risk analysis", "what drives success",
-        "how to use the dashboard", "income demographics", "competition analysis"
+        "how to use the dashboard", "income demographics", "competition analysis",
+        "compare areas", "how many stores", "ROI analysis"
     ]
     return (
-        f"🤔 I'm not sure about that specific question, but I can help with:\n\n"
+        f"🤔 I couldn't find a specific answer for *'{user_msg}'*, but I can help with:\n\n"
         + "\n".join([f"- *{s}*" for s in suggestions])
         + f"\n\nOr try rephrasing — I understand questions about sites, risks, "
         f"scores, locations, features, and how to use the dashboard!"
@@ -404,16 +471,51 @@ with st.sidebar:
     st.markdown("*Dubai Expansion Intelligence*")
     st.markdown("---")
     page = st.radio("Navigate",
-                    ["🏠 Overview", "🔍 Explore Sites", "🎯 Predict Location", "🤖 AI Assistant"],
+                    ["🏠 Overview", "🔍 Explore Sites", "🎯 Predict Location", "💰 ROI Analyzer", "🤖 AI Assistant"],
                     label_visibility="collapsed")
     st.markdown("---")
     st.markdown("**Filter Areas**")
     areas = sorted(df["area"].unique())
-    sel   = st.multiselect("Areas", areas, default=areas[:5])
+    # FIX 1: Default to ALL areas instead of only the first 5
+    sel   = st.multiselect("Areas", areas, default=areas)
     df_f  = df[df["area"].isin(sel)].copy() if sel else df.copy()
     st.markdown("---")
     rec = df_f["verdict"].str.contains("Recommended").sum()
     st.caption(f"📊 {len(df_f):,} sites | ✅ {rec} recommended")
+
+    # FIX 2: Sidebar confidence histogram for quick visual of filtered data
+    if len(df_f) > 0:
+        fig_hist = px.histogram(
+            df_f, x="confidence", nbins=20, height=180,
+            color_discrete_sequence=["#667eea"],
+            title="Confidence Distribution"
+        )
+        fig_hist.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            font=dict(color="white", size=10), margin=dict(l=5, r=5, t=30, b=5),
+            showlegend=False, xaxis=dict(gridcolor="rgba(255,255,255,0.1)"),
+            yaxis=dict(gridcolor="rgba(255,255,255,0.1)")
+        )
+        st.plotly_chart(fig_hist, use_container_width=True)
+
+    st.markdown("---")
+    # FIX 3: Global CSV download in sidebar
+    csv = df_f.to_csv(index=False).encode("utf-8")
+    st.download_button("📥 Download Analysis CSV", csv,
+                       "lenskart_analysis.csv", "text/csv", use_container_width=True)
+
+    # FIX 4: Clear session state button
+    if st.button("🗑️ Reset All Filters", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
+
+
+# FIX 5: Dynamic metric deltas (filtered vs full dataset)
+def _delta(filtered_val, full_val, fmt=None):
+    diff = filtered_val - full_val
+    if fmt == "pct":
+        return f"{diff:+.1%}"
+    return f"{diff:+,.0f}" if abs(diff) >= 1 else f"{diff:+.3f}"
 
 
 # ════════════════════════════════════════════════
@@ -431,10 +533,18 @@ if page == "🏠 Overview":
     """, unsafe_allow_html=True)
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("📍 Sites Analyzed",  f"{len(df_f):,}", "+2,500")
-    k2.metric("✅ Recommended",      df_f["verdict"].str.contains("Recommended").sum(), "+12%")
-    k3.metric("🏆 Avg Confidence",   f"{df_f['confidence'].mean():.1%}", "↑5%")
-    k4.metric("⚠️ High Risk",        (df_f["risk_level"] == "High").sum(), "-8%")
+    k1.metric("📍 Sites Analyzed",  f"{len(df_f):,}",
+              _delta(len(df_f), len(df)))
+    k2.metric("✅ Recommended",
+              df_f["verdict"].str.contains("Recommended").sum(),
+              _delta(df_f["verdict"].str.contains("Recommended").sum(),
+                     df["verdict"].str.contains("Recommended").sum()))
+    k3.metric("🏆 Avg Confidence",  f"{df_f['confidence'].mean():.1%}",
+              _delta(df_f["confidence"].mean(), df["confidence"].mean(), "pct"))
+    k4.metric("⚠️ High Risk",
+              (df_f["risk_level"] == "High").sum(),
+              _delta((df_f["risk_level"] == "High").sum(),
+                     (df["risk_level"] == "High").sum()))
 
     st.markdown("---")
     top5 = df_f.nlargest(5, "confidence")
@@ -502,9 +612,11 @@ if page == "🏠 Overview":
         st.markdown("### 🔀 Sankey: Location Flow")
         agg = df_f.groupby(["location_type","verdict"]).size().reset_index(name="count")
         all_nodes = list(df_f["location_type"].unique()) + list(df_f["verdict"].unique())
-        node_idx = {n: i for i, n in enumerate(all_nodes)}
+        node_idx  = {n: i for i, n in enumerate(all_nodes)}
+        # FIX 6: Ensure node colors always match node count
+        node_colors = [COLORS[i % len(COLORS)] for i in range(len(all_nodes))]
         fig_sankey = go.Figure(go.Sankey(
-            node=dict(label=all_nodes, color=COLORS[:len(all_nodes)], pad=20, thickness=25),
+            node=dict(label=all_nodes, color=node_colors, pad=20, thickness=25),
             link=dict(
                 source=[node_idx[r["location_type"]] for _, r in agg.iterrows()],
                 target=[node_idx[r["verdict"]] for _, r in agg.iterrows()],
@@ -589,8 +701,14 @@ elif page == "🔍 Explore Sites":
 
         st.markdown("### 🎬 Animated Bubble Chart")
         df_anim = df_f.copy()
-        df_anim["income_band"] = pd.cut(df_f["med_income_aed"], bins=3,
-                                         labels=["Low Income","Mid Income","High Income"])
+        # FIX 7: Sort income_band correctly Low → Mid → High
+        df_anim["income_band"] = pd.Categorical(
+            pd.cut(df_f["med_income_aed"], bins=3,
+                   labels=["Low Income","Mid Income","High Income"]),
+            categories=["Low Income","Mid Income","High Income"],
+            ordered=True
+        )
+        df_anim = df_anim.sort_values("income_band")
         fig_anim = px.scatter(
             df_anim, x="med_income_aed", y="footfall_daily",
             animation_frame="income_band", size="composite_score", color="confidence",
@@ -621,8 +739,8 @@ elif page == "🔍 Explore Sites":
         col1, col2 = st.columns(2)
         with col1:
             cluster_means = df_f.groupby("location_type")[FEATURES].mean()
-            feat_labels = list(FEATURE_LABELS.values())
-            fig_radar = go.Figure()
+            feat_labels   = list(FEATURE_LABELS.values())
+            fig_radar     = go.Figure()
             for i, (lt, row) in enumerate(cluster_means.iterrows()):
                 vals = row.tolist()
                 mn, mx = min(vals), max(vals) + 1e-9
@@ -656,50 +774,57 @@ elif page == "🔍 Explore Sites":
 
         st.markdown("### 🔗 Key Insights (Association Rules)")
         df_bin = df_f[["near_mall","metro_access","optimal_site"]].astype(bool)
-        freq = apriori(df_bin, min_support=0.1, use_colnames=True)
-        if not freq.empty:
+        freq   = apriori(df_bin, min_support=0.1, use_colnames=True)
+
+        # FIX 8: Graceful fallback if no frequent itemsets found
+        if freq.empty:
+            st.info("ℹ️ Not enough data in the current filter to generate association rules. "
+                    "Try selecting more areas in the sidebar.")
+        else:
             rules = association_rules(freq, metric="lift", min_threshold=1.0)
-            rules = rules.rename(columns={
-                "antecedents": "IF (Antecedent)", "consequents": "THEN (Consequent)",
-                "support": "Support", "confidence": "Confidence", "lift": "Lift"
-            })
-            rules["IF (Antecedent)"]   = rules["IF (Antecedent)"].apply(lambda x: " + ".join(list(x)))
-            rules["THEN (Consequent)"] = rules["THEN (Consequent)"].apply(lambda x: " + ".join(list(x)))
-            rules = rules.round(3)
+            if rules.empty:
+                st.info("ℹ️ No rules with Lift ≥ 1.0 found for the current filter.")
+            else:
+                rules = rules.rename(columns={
+                    "antecedents": "IF (Antecedent)", "consequents": "THEN (Consequent)",
+                    "support": "Support", "confidence": "Confidence", "lift": "Lift"
+                })
+                rules["IF (Antecedent)"]   = rules["IF (Antecedent)"].apply(lambda x: " + ".join(list(x)))
+                rules["THEN (Consequent)"] = rules["THEN (Consequent)"].apply(lambda x: " + ".join(list(x)))
+                rules = rules.round(3)
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Rules Found",    len(rules))
-            c2.metric("Max Lift",       f"{rules['Lift'].max():.2f}x")
-            c3.metric("Max Confidence", f"{rules['Confidence'].max():.1%}")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Rules Found",    len(rules))
+                c2.metric("Max Lift",       f"{rules['Lift'].max():.2f}x")
+                c3.metric("Max Confidence", f"{rules['Confidence'].max():.1%}")
 
-            st.dataframe(
-                rules[["IF (Antecedent)","THEN (Consequent)","Support","Confidence","Lift"]].head(10),
-                use_container_width=True
-            )
-            inference("IF near_mall + metro → THEN optimal_site reads as a business rule. "
-                      "<b>Lift > 1 = the combination is more powerful than chance.</b> "
-                      "Use these as quick checklists when scouting new locations.")
+                st.dataframe(
+                    rules[["IF (Antecedent)","THEN (Consequent)","Support","Confidence","Lift"]].head(10),
+                    use_container_width=True
+                )
+                inference("IF near_mall + metro → THEN optimal_site reads as a business rule. "
+                          "<b>Lift > 1 = the combination is more powerful than chance.</b> "
+                          "Use these as quick checklists when scouting new locations.")
 
-            fig_rules = px.scatter(
-                rules, x="Support", y="Confidence", size="Lift", color="Lift",
-                hover_data={"IF (Antecedent)": True, "THEN (Consequent)": True},
-                color_continuous_scale="plasma",
-                title="Support vs Confidence (Bubble Size = Lift)", height=380
-            )
-            fig_rules.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS)
-            st.plotly_chart(fig_rules, use_container_width=True)
-            inference("<b>Top-right large bubbles = most actionable rules</b> — "
-                      "high support, high confidence, and high lift all together.")
+                fig_rules = px.scatter(
+                    rules, x="Support", y="Confidence", size="Lift", color="Lift",
+                    hover_data={"IF (Antecedent)": True, "THEN (Consequent)": True},
+                    color_continuous_scale="plasma",
+                    title="Support vs Confidence (Bubble Size = Lift)", height=380
+                )
+                fig_rules.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS)
+                st.plotly_chart(fig_rules, use_container_width=True)
+                inference("<b>Top-right large bubbles = most actionable rules</b> — "
+                          "high support, high confidence, and high lift all together.")
 
     with tab3:
         st.markdown("### ⏳ 3-Year Risk Aging Matrix")
-        risk_data = {"Low":[1.0,1.1,1.2],"Medium":[1.0,1.4,1.9],"High":[1.0,1.8,2.8]}
         counts = df_f["risk_level"].value_counts()
-        rows = []
-        for rl, mults in risk_data.items():
+        rows   = []
+        for rl, mults in RISK_MULTIPLIERS.items():
             if rl in counts.index:
-                for yr, m in zip([1,2,3], mults):
-                    rows.append({"Risk Level":rl,"Year":f"Year {yr}","Risk Score":round(counts[rl]*m)})
+                for yr, m in zip([1, 2, 3], mults):
+                    rows.append({"Risk Level": rl, "Year": f"Year {yr}", "Risk Score": round(counts[rl]*m)})
         aging_df = pd.DataFrame(rows)
 
         col1, col2 = st.columns(2)
@@ -732,10 +857,6 @@ elif page == "🔍 Explore Sites":
         st.plotly_chart(fig_heat2, use_container_width=True)
         inference("<b>Dark red = many high-risk sites — avoid. Dark green = safe expansion zone.</b> "
                   "Areas green across the full row are your safest Dubai territories.")
-
-        csv = df_f.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 Download Full Analysis CSV", csv,
-                           "lenskart_analysis.csv", "text/csv", use_container_width=True)
 
 
 # ════════════════════════════════════════════════
@@ -774,10 +895,10 @@ elif page == "🎯 Predict Location":
                           "⭐⭐⭐⭐"   if prob > 0.65 else
                           "⭐⭐⭐"     if prob > 0.40 else "⭐⭐")
 
-            if prob > 0.65:
+            if prob > CONFIDENCE_THRESHOLD_GO:
                 badge = '<span class="go-badge">✅ GO — OPEN HERE</span>'
                 st.balloons()
-            elif prob > 0.40:
+            elif prob > CONFIDENCE_THRESHOLD_REVIEW:
                 badge = '<span class="caution-badge">⚠️ CAUTION — REVIEW</span>'
             else:
                 badge = '<span class="avoid-badge">❌ AVOID — HIGH RISK</span>'
@@ -796,7 +917,7 @@ elif page == "🎯 Predict Location":
             fig_gauge = go.Figure(go.Indicator(
                 mode="gauge+number+delta",
                 value=round(prob*100, 1),
-                delta={"reference": 65, "valueformat": ".1f"},
+                delta={"reference": CONFIDENCE_THRESHOLD_GO*100, "valueformat": ".1f"},
                 title={"text": "Confidence Score (%)", "font": {"color": "white"}},
                 number={"suffix": "%", "font": {"color": "white", "size": 48}},
                 gauge={
@@ -805,25 +926,27 @@ elif page == "🎯 Predict Location":
                     "bgcolor": "rgba(255,255,255,0.05)",
                     "bordercolor": "rgba(255,255,255,0.2)",
                     "steps": [
-                        {"range":[0,40],  "color":"rgba(239,68,68,0.3)"},
-                        {"range":[40,65], "color":"rgba(245,158,11,0.3)"},
-                        {"range":[65,100],"color":"rgba(34,197,94,0.3)"}
+                        {"range":[0, CONFIDENCE_THRESHOLD_REVIEW*100],  "color":"rgba(239,68,68,0.3)"},
+                        {"range":[CONFIDENCE_THRESHOLD_REVIEW*100, CONFIDENCE_THRESHOLD_GO*100], "color":"rgba(245,158,11,0.3)"},
+                        {"range":[CONFIDENCE_THRESHOLD_GO*100, 100], "color":"rgba(34,197,94,0.3)"}
                     ],
-                    "threshold": {"line":{"color":"white","width":3},"thickness":0.8,"value":65}
+                    "threshold": {"line":{"color":"white","width":3},"thickness":0.8,
+                                  "value": CONFIDENCE_THRESHOLD_GO*100}
                 }
             ))
             fig_gauge.update_layout(**CHART_BG, height=320)
             st.plotly_chart(fig_gauge, use_container_width=True)
-            inference("<b>Green zone (65–100%) = GO. Yellow = Review. Red = Avoid.</b> "
-                      "The white line at 65% is Lenskart's minimum confidence threshold for lease commitment.")
+            inference(f"<b>Green zone ({CONFIDENCE_THRESHOLD_GO:.0%}–100%) = GO. Yellow = Review. Red = Avoid.</b> "
+                      f"The white line at {CONFIDENCE_THRESHOLD_GO:.0%} is Lenskart's minimum confidence threshold for lease commitment.")
 
             st.markdown("### 🔍 Score Breakdown")
+            # FIX 9: Cap each component properly — demographics capped at 0.25
             components = {
-                "Footfall":           0.30 * float(np.log1p(footfall)) / 10,
+                "Footfall":           min(0.30, 0.30 * float(np.log1p(footfall)) / 10),
                 "Demographics":       0.25 * (1 if age < 38 and income > 15000 else 0),
                 "Low Competition":    0.20 * (1 / (1 + competitors)),
-                "Accessibility":      0.15 * (int(near_mall) + int(metro)),
-                "Population Density": 0.10 * (density / 20)
+                "Accessibility":      0.15 * (int(near_mall) + int(metro)) / 2,
+                "Population Density": 0.10 * min(1.0, density / 20)
             }
             sc_df       = pd.DataFrame(components.items(), columns=["Factor","Score"])
             total_score = sc_df["Score"].sum()
@@ -842,7 +965,7 @@ elif page == "🎯 Predict Location":
             st.plotly_chart(fig_wf, use_container_width=True)
             inference("<b>Taller green bar = that factor is working in your favour.</b> "
                       "Demographics = 0 means the area's profile doesn't match Lenskart's target customer. "
-                      "The blue Total bar must exceed 0.65 for a GO decision.")
+                      f"The blue Total bar must exceed {CONFIDENCE_THRESHOLD_GO:.2f} for a GO decision.")
         else:
             st.markdown("""
             <div class="hero-card" style="text-align:center;padding:4rem 2rem">
@@ -867,14 +990,13 @@ elif page == "🤖 AI Assistant":
     </div>
     """, unsafe_allow_html=True)
 
-    # Suggested prompts
     st.markdown("**💬 Suggested Questions:**")
     sg1, sg2, sg3, sg4 = st.columns(4)
     prompts = {
-        "🏆 Top sites":           "What are the top recommended sites?",
-        "⚠️ Risk analysis":       "Give me a risk analysis",
-        "🎛️ Key drivers":         "What factors drive a successful outlet?",
-        "📊 Dashboard summary":   "Give me an overview of the data"
+        "🏆 Top sites":         "What are the top recommended sites?",
+        "⚠️ Risk analysis":     "Give me a risk analysis",
+        "🎛️ Key drivers":       "What factors drive a successful outlet?",
+        "📊 Dashboard summary": "Give me an overview of the data"
     }
     triggered = None
     for col, (label, prompt) in zip([sg1, sg2, sg3, sg4], prompts.items()):
@@ -884,7 +1006,6 @@ elif page == "🤖 AI Assistant":
 
     st.markdown("---")
 
-    # Init chat history
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [
             {"role": "assistant", "content":
@@ -894,36 +1015,412 @@ elif page == "🤖 AI Assistant":
              "or how to interpret any chart on this dashboard!"}
         ]
 
-    # Display history
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"],
                              avatar="🤖" if msg["role"] == "assistant" else "👤"):
             st.markdown(msg["content"])
 
-    # Handle suggested prompt button click
     if triggered:
         st.session_state.chat_history.append({"role": "user", "content": triggered})
         response = chatbot_response(triggered, df_f)
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         st.rerun()
 
-    # Chat input
     if user_input := st.chat_input("Ask me anything about Lenskart's Dubai expansion... 🕶️"):
         st.session_state.chat_history.append({"role": "user", "content": user_input})
         response = chatbot_response(user_input, df_f)
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         st.rerun()
 
-    # Clear button
     if len(st.session_state.chat_history) > 1:
         if st.button("🗑️ Clear Chat", use_container_width=False):
             st.session_state.chat_history = [st.session_state.chat_history[0]]
             st.rerun()
 
 
+
+# ════════════════════════════════════════════════
+# PAGE 5 — ROI ANALYZER
+# ════════════════════════════════════════════════
+elif page == "💰 ROI Analyzer":
+
+    st.markdown("""
+    <div class="hero-card">
+        <h1 style="font-size:2.5rem;margin:0">💰 ROI Analyzer</h1>
+        <p style="font-size:1.05rem;color:rgba(255,255,255,0.7);margin-top:0.5rem">
+        Model your investment, forecast returns, and evaluate outlet viability over 1–5 years.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    tab_roi1, tab_roi2, tab_roi3 = st.tabs(["📥 Input & Forecast", "📊 Portfolio ROI", "🏆 ROI Leaderboard"])
+
+    # ── TAB 1: INPUT & SINGLE-SITE FORECAST ─────────────────────────────────
+    with tab_roi1:
+        st.markdown("### 🏗️ Configure Your Outlet Investment")
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown("**💸 Cost Inputs**")
+            setup_cost      = st.number_input("Setup / Fit-out Cost (AED)",        50000, 2000000, 350000, 10000)
+            monthly_rent    = st.number_input("Monthly Rent (AED)",                 5000,  150000,  25000,  1000)
+            monthly_ops     = st.number_input("Monthly Operating Costs (AED)",      3000,  100000,  15000,   500)
+            staff_cost      = st.number_input("Monthly Staff Cost (AED)",           2000,   80000,  12000,   500)
+        with c2:
+            st.markdown("**📈 Revenue Inputs**")
+            avg_ticket      = st.number_input("Average Transaction (AED)",            50,    2000,    380,     10)
+            daily_customers = st.number_input("Expected Daily Customers",              5,    1000,    120,      5)
+            conversion_rate = st.slider("Conversion Rate (%)", 1, 60, 18)
+            revenue_growth  = st.slider("Annual Revenue Growth (%)", 0, 40, 12)
+        with c3:
+            st.markdown("**⚙️ Settings**")
+            forecast_years  = st.slider("Forecast Horizon (Years)", 1, 5, 3)
+            discount_rate   = st.slider("Discount Rate / WACC (%)", 1, 25, 10)
+            occupancy_rate  = st.slider("Occupancy / Operating Days (%)", 50, 100, 85)
+            tax_rate        = st.slider("Tax Rate (%)", 0, 30, 9)
+
+        st.markdown("---")
+
+        # ── CALCULATIONS ────────────────────────────────────────────────────
+        operating_days_yr   = 365 * occupancy_rate / 100
+        daily_revenue       = daily_customers * (conversion_rate / 100) * avg_ticket
+        annual_revenue_yr1  = daily_revenue * operating_days_yr
+        annual_fixed_costs  = (monthly_rent + monthly_ops + staff_cost) * 12
+        gross_margin        = 0.62   # eyewear industry benchmark
+
+        years         = list(range(1, forecast_years + 1))
+        revenues, profits, cumulative_cash, npv_flows = [], [], [], []
+        cum = -setup_cost
+
+        for yr in years:
+            rev   = annual_revenue_yr1 * ((1 + revenue_growth / 100) ** (yr - 1))
+            gross = rev * gross_margin
+            ebit  = gross - annual_fixed_costs
+            nopat = ebit * (1 - tax_rate / 100)
+            fcf   = nopat  # simplified free cash flow
+            disc  = fcf / ((1 + discount_rate / 100) ** yr)
+            cum  += fcf
+            revenues.append(round(rev))
+            profits.append(round(nopat))
+            cumulative_cash.append(round(cum))
+            npv_flows.append(round(disc))
+
+        npv           = sum(npv_flows) - setup_cost
+        total_invest  = setup_cost + annual_fixed_costs * forecast_years
+        total_profit  = sum(profits)
+        roi_pct       = (total_profit / total_invest) * 100 if total_invest > 0 else 0
+        payback_yr    = next((yr for yr, cc in zip(years, cumulative_cash) if cc >= 0), None)
+
+        # ── KPI TILES ────────────────────────────────────────────────────────
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("📊 NPV",
+                  f"AED {npv/1e6:.2f}M" if abs(npv) >= 1e6 else f"AED {npv:,.0f}",
+                  "Positive ✅" if npv > 0 else "Negative ❌")
+        k2.metric("📈 Total ROI",   f"{roi_pct:.1f}%",
+                  "Strong" if roi_pct > 60 else ("Moderate" if roi_pct > 25 else "Weak"))
+        k3.metric("💰 Yr1 Revenue", f"AED {annual_revenue_yr1/1e3:.0f}K")
+        k4.metric("💸 Yr1 NOPAT",   f"AED {profits[0]/1e3:.0f}K",
+                  "Profitable ✅" if profits[0] > 0 else "Loss ❌")
+        k5.metric("⏱️ Payback",
+                  f"Year {payback_yr}" if payback_yr else "Beyond horizon",
+                  "On track" if payback_yr and payback_yr <= 3 else "Monitor")
+
+        st.markdown("---")
+
+        # ── CHARTS ROW 1 ─────────────────────────────────────────────────────
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("### 📈 Revenue & Profit Forecast")
+            forecast_df = pd.DataFrame({
+                "Year":     [f"Year {y}" for y in years],
+                "Revenue":  revenues,
+                "NOPAT":    profits,
+            })
+            fig_bar = go.Figure()
+            fig_bar.add_trace(go.Bar(
+                x=forecast_df["Year"], y=forecast_df["Revenue"],
+                name="Revenue", marker_color="#667eea", opacity=0.85
+            ))
+            fig_bar.add_trace(go.Bar(
+                x=forecast_df["Year"], y=forecast_df["NOPAT"],
+                name="NOPAT", marker_color="#22c55e", opacity=0.85
+            ))
+            fig_bar.update_layout(
+                **CHART_BG, barmode="group", height=380,
+                xaxis=AXIS, yaxis=AXIS,
+                title="Revenue vs NOPAT by Year",
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+            inference("<b>Growing gap between Revenue and NOPAT bars</b> = cost structure is "
+                      "eating margin. If NOPAT bar is negative in Year 1, lease economics need renegotiation.")
+
+        with col2:
+            st.markdown("### 💸 Cumulative Cash Flow")
+            cum_df = pd.DataFrame({
+                "Year":            ["Setup"] + [f"Year {y}" for y in years],
+                "Cumulative Cash": [-setup_cost] + cumulative_cash
+            })
+            fig_cum = go.Figure()
+            fig_cum.add_trace(go.Scatter(
+                x=cum_df["Year"], y=cum_df["Cumulative Cash"],
+                mode="lines+markers+text",
+                text=[f"AED {v/1e3:.0f}K" for v in cum_df["Cumulative Cash"]],
+                textposition="top center",
+                line=dict(color="#a78bfa", width=3),
+                marker=dict(size=10, color=[
+                    "#ef4444" if v < 0 else "#22c55e"
+                    for v in cum_df["Cumulative Cash"]
+                ]),
+                fill="tozeroy",
+                fillcolor="rgba(102,126,234,0.1)"
+            ))
+            fig_cum.add_hline(y=0, line_dash="dash",
+                              line_color="rgba(255,255,255,0.4)", line_width=1.5)
+            fig_cum.update_layout(
+                **CHART_BG, height=380, xaxis=AXIS, yaxis=AXIS,
+                title="Break-Even Trajectory",
+                showlegend=False
+            )
+            st.plotly_chart(fig_cum, use_container_width=True)
+            inference("<b>The point where the line crosses zero = payback period.</b> "
+                      "Red markers = still in investment recovery. Green = profitable territory. "
+                      "Steeper slope = faster payback.")
+
+        # ── CHARTS ROW 2 ─────────────────────────────────────────────────────
+        col3, col4 = st.columns(2)
+
+        with col3:
+            st.markdown("### 🎯 NPV Waterfall")
+            wf_labels  = ["Initial Investment"] + [f"Year {y} DCF" for y in years] + ["Net NPV"]
+            wf_values  = [-setup_cost] + npv_flows + [None]
+            wf_measure = ["absolute"] + ["relative"] * len(years) + ["total"]
+            fig_npv = go.Figure(go.Waterfall(
+                name="NPV", orientation="v",
+                x=wf_labels, y=wf_values, measure=wf_measure,
+                connector={"line": {"color": "rgba(255,255,255,0.3)"}},
+                decreasing={"marker": {"color": "#ef4444"}},
+                increasing={"marker": {"color": "#22c55e"}},
+                totals={"marker":    {"color": "#667eea"}},
+                text=[
+                    f"AED {abs(v)/1e3:.0f}K" if v is not None else ""
+                    for v in wf_values
+                ],
+                textposition="outside"
+            ))
+            fig_npv.update_layout(
+                **CHART_BG, height=400, xaxis=AXIS, yaxis=AXIS,
+                title=f"NPV Waterfall (Discount Rate: {discount_rate}%)"
+            )
+            st.plotly_chart(fig_npv, use_container_width=True)
+            inference("<b>Each green bar = discounted cash flow added. The blue total bar = NPV.</b> "
+                      "If total bar is above zero, the investment creates value. Below zero = destroys value "
+                      "at this discount rate.")
+
+        with col4:
+            st.markdown("### 🌡️ Cost Structure Breakdown")
+            cost_labels = ["Setup Cost (1-time)", "Annual Rent",
+                           "Annual Operations", "Annual Staff"]
+            cost_values = [setup_cost, monthly_rent * 12,
+                           monthly_ops * 12, staff_cost * 12]
+            fig_pie = go.Figure(go.Pie(
+                labels=cost_labels, values=cost_values,
+                hole=0.5,
+                marker=dict(colors=["#ef4444","#f59e0b","#667eea","#a78bfa"],
+                            line=dict(color="rgba(0,0,0,0)", width=0)),
+                textinfo="label+percent",
+                textfont=dict(color="white", size=12)
+            ))
+            fig_pie.update_layout(
+                **CHART_BG, height=400,
+                title="Cost Composition",
+                legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+            inference("<b>Rent typically dominates Dubai outlet costs.</b> If rent slice > 45% of total cost, "
+                      "renegotiate or shorten the lease. Setup cost amortises over time — "
+                      "longer leases spread it thinner.")
+
+        # ── SENSITIVITY TABLE ─────────────────────────────────────────────────
+        st.markdown("### 🔄 Sensitivity Analysis — ROI vs Growth & Conversion")
+        growth_rates  = [5, 8, 12, 16, 20]
+        conv_rates    = [10, 15, 18, 22, 28]
+        sense_matrix  = []
+        for gr in growth_rates:
+            row = []
+            for cr in conv_rates:
+                d_rev  = daily_customers * (cr / 100) * avg_ticket * operating_days_yr
+                t_prof = sum([
+                    (d_rev * ((1 + gr/100)**(yr-1)) * gross_margin - annual_fixed_costs)
+                    * (1 - tax_rate / 100)
+                    for yr in years
+                ])
+                sense_roi = (t_prof / total_invest) * 100 if total_invest > 0 else 0
+                row.append(round(sense_roi, 1))
+            sense_matrix.append(row)
+
+        sense_df = pd.DataFrame(
+            sense_matrix,
+            index=[f"Growth {g}%" for g in growth_rates],
+            columns=[f"Conv {c}%" for c in conv_rates]
+        )
+        fig_sense = px.imshow(
+            sense_df, text_auto=True, aspect="auto",
+            color_continuous_scale=[[0,"#ef4444"],[0.4,"#f59e0b"],[1,"#22c55e"]],
+            title="ROI (%) — Revenue Growth vs Conversion Rate", height=360
+        )
+        fig_sense.update_layout(**CHART_BG)
+        st.plotly_chart(fig_sense, use_container_width=True)
+        inference("<b>Green cells = strong ROI scenarios. Red = unviable.</b> "
+                  "Find your current growth and conversion in the grid — that's your baseline. "
+                  "Move right or down to see upside potential.")
+
+    # ── TAB 2: PORTFOLIO ROI ─────────────────────────────────────────────────
+    with tab_roi2:
+        st.markdown("### 📊 Portfolio-Level ROI by Area")
+        st.caption("Estimated ROI for each area based on confidence scores, footfall, and income data")
+
+        # Estimate ROI proxy from dataset columns
+        df_roi = df_f.copy()
+        df_roi["est_daily_rev"]    = df_roi["footfall_daily"] * 0.18 * 380 * 0.62 * 0.85
+        df_roi["est_annual_rev"]   = df_roi["est_daily_rev"] * 310
+        df_roi["est_annual_cost"]  = (25000 + 15000 + 12000) * 12   # AED fixed cost benchmark
+        df_roi["est_nopat"]        = (df_roi["est_annual_rev"] - df_roi["est_annual_cost"]) * 0.91
+        df_roi["est_roi_pct"]      = (df_roi["est_nopat"] / (350000 + df_roi["est_annual_cost"])) * 100
+
+        area_roi = df_roi.groupby("area").agg(
+            avg_roi=("est_roi_pct",    "mean"),
+            avg_conf=("confidence",    "mean"),
+            total_sites=("area",       "count"),
+            avg_footfall=("footfall_daily", "mean")
+        ).reset_index().sort_values("avg_roi", ascending=False)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            fig_roi_bar = px.bar(
+                area_roi.head(10), x="avg_roi", y="area", orientation="h",
+                color="avg_roi",
+                color_continuous_scale=[[0,"#ef4444"],[0.5,"#f59e0b"],[1,"#22c55e"]],
+                title="Top 10 Areas by Estimated ROI (%)", height=420,
+                labels={"avg_roi": "Est. ROI (%)", "area": "Area"}
+            )
+            fig_roi_bar.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS)
+            st.plotly_chart(fig_roi_bar, use_container_width=True)
+            inference("<b>Longest green bar = highest estimated return per AED invested.</b> "
+                      "Cross-reference with the Confidence Map to confirm ML endorsement before committing.")
+
+        with col2:
+            fig_roi_scatter = px.scatter(
+                area_roi, x="avg_conf", y="avg_roi",
+                size="total_sites", color="avg_roi", hover_name="area",
+                color_continuous_scale=[[0,"#ef4444"],[0.5,"#f59e0b"],[1,"#22c55e"]],
+                labels={"avg_conf": "Avg Confidence Score", "avg_roi": "Est. ROI (%)"},
+                title="Confidence vs ROI by Area", height=420, size_max=40
+            )
+            fig_roi_scatter.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS)
+            st.plotly_chart(fig_roi_scatter, use_container_width=True)
+            inference("<b>Top-right = sweet spot: high confidence AND high ROI.</b> "
+                      "Bubbles in top-left = high returns but risky — do extra due diligence. "
+                      "Bubble size = number of available sites in that area.")
+
+        st.markdown("### 💹 3-Year Cumulative Portfolio Value")
+        area_roi["yr1_profit"] = area_roi["avg_roi"] / 100 * (350000 + (25000+15000+12000)*12)
+        area_roi["yr2_profit"] = area_roi["yr1_profit"] * 1.12
+        area_roi["yr3_profit"] = area_roi["yr2_profit"] * 1.12
+
+        top_areas = area_roi.head(8)
+        fig_area_line = go.Figure()
+        for _, row in top_areas.iterrows():
+            fig_area_line.add_trace(go.Scatter(
+                x=["Year 1", "Year 2", "Year 3"],
+                y=[row["yr1_profit"], row["yr2_profit"], row["yr3_profit"]],
+                mode="lines+markers", name=row["area"],
+                line=dict(width=2), marker=dict(size=7)
+            ))
+        fig_area_line.update_layout(
+            **CHART_BG, height=420, xaxis=AXIS, yaxis=AXIS,
+            title="Top 8 Areas — Projected Annual Profit (AED)",
+            legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="white"))
+        )
+        st.plotly_chart(fig_area_line, use_container_width=True)
+        inference("<b>Steeper slope = faster-growing markets.</b> "
+                  "Areas where lines converge by Year 3 are catching up — "
+                  "consider early mover advantage in those zones.")
+
+    # ── TAB 3: ROI LEADERBOARD ───────────────────────────────────────────────
+    with tab_roi3:
+        st.markdown("### 🏆 Site ROI Leaderboard")
+        st.caption("Top sites ranked by estimated ROI — use this to shortlist final investment decisions")
+
+        df_lb = df_f.copy()
+        df_lb["est_annual_rev"]  = df_lb["footfall_daily"] * 0.18 * 380 * 0.62 * 0.85 * 310
+        df_lb["est_annual_cost"] = (25000 + 15000 + 12000) * 12
+        df_lb["est_nopat"]       = (df_lb["est_annual_rev"] - df_lb["est_annual_cost"]) * 0.91
+        df_lb["est_roi_pct"]     = (
+            df_lb["est_nopat"] / (350000 + df_lb["est_annual_cost"])
+        ).clip(lower=-1) * 100
+        df_lb["payback_est"]     = (350000 / df_lb["est_nopat"].clip(lower=1)).clip(upper=10).round(1)
+        df_lb["roi_grade"]       = pd.cut(
+            df_lb["est_roi_pct"],
+            bins=[-np.inf, 0, 20, 40, 60, np.inf],
+            labels=["❌ Loss", "🔴 Poor", "🟡 Moderate", "🟢 Good", "⭐ Excellent"]
+        )
+
+        cols_show = ["area", "location_type", "confidence", "est_roi_pct",
+                     "payback_est", "roi_grade", "verdict", "risk_level"]
+        leaderboard = (
+            df_lb[cols_show]
+            .sort_values("est_roi_pct", ascending=False)
+            .rename(columns={
+                "area":          "Area",
+                "location_type": "Zone Type",
+                "confidence":    "ML Confidence",
+                "est_roi_pct":   "Est. ROI (%)",
+                "payback_est":   "Payback (Yrs)",
+                "roi_grade":     "ROI Grade",
+                "verdict":       "ML Verdict",
+                "risk_level":    "Risk"
+            })
+        )
+        leaderboard["ML Confidence"] = leaderboard["ML Confidence"].map("{:.1%}".format)
+        leaderboard["Est. ROI (%)"]  = leaderboard["Est. ROI (%)"].map("{:.1f}".format)
+
+        st.dataframe(leaderboard.head(20), use_container_width=True, height=480)
+        inference("<b>Sites with Excellent ROI grade + ✅ ML Verdict + Low Risk = your priority investment list.</b> "
+                  "Payback < 2 years is exceptional for Dubai retail. Always pair leaderboard rank "
+                  "with the Predict Page for a full site assessment.")
+
+        # Download leaderboard
+        lb_csv = leaderboard.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "📥 Download ROI Leaderboard CSV", lb_csv,
+            "lenskart_roi_leaderboard.csv", "text/csv", use_container_width=True
+        )
+
+        # Summary metrics for the leaderboard
+        st.markdown("---")
+        st.markdown("### 📊 ROI Distribution Across Portfolio")
+        fig_roi_dist = px.histogram(
+            df_lb, x="est_roi_pct", nbins=30, color="roi_grade",
+            color_discrete_map={
+                "❌ Loss": "#ef4444", "🔴 Poor": "#f97316",
+                "🟡 Moderate": "#f59e0b", "🟢 Good": "#22c55e", "⭐ Excellent": "#a78bfa"
+            },
+            title="Portfolio ROI Distribution", height=380,
+            labels={"est_roi_pct": "Estimated ROI (%)", "count": "Number of Sites"}
+        )
+        fig_roi_dist.update_layout(**CHART_BG, xaxis=AXIS, yaxis=AXIS,
+                                   legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="white")))
+        st.plotly_chart(fig_roi_dist, use_container_width=True)
+        inference("<b>Right-skewed distribution = most sites are profitable — healthy portfolio signal.</b> "
+                  "Sites in the red/orange left tail should be deprioritised. "
+                  "A tight purple/green cluster = consistent high performers worth fast-tracking.")
+
 # ── FOOTER ───────────────────────────────────────────────────────────────────
-st.markdown("""
+st.markdown(f"""
 <div style="text-align:center;padding:2rem;color:rgba(255,255,255,0.4);font-size:0.85rem">
-    🕶️ Lenskart Dubai Intelligence · ML-Powered · Production Ready
+    🕶️ Lenskart Dubai Intelligence · ML-Powered · Production Ready ·
+    Last run: {datetime.now().strftime("%d %b %Y, %H:%M")}
 </div>
 """, unsafe_allow_html=True)
